@@ -32,7 +32,7 @@ dependencies:
     sdk: flutter
   # Para requisições HTTP (POST, GET, download)
   dio: ^5.0.0 
-
+  path: ^1.8.3
   # Para selecionar arquivos no navegador (Web)
   file_picker: ^6.1.1 
 
@@ -66,7 +66,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
+  assets:
+    - assets/data/
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

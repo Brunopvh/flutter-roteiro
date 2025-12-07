@@ -4,9 +4,28 @@ import 'package:file_picker/file_picker.dart';
 import 'package:universal_html/html.dart' as html;
 import 'dart:async';
 import 'package:flutter/services.dart';
+import 'package:rotas/util/load_assets.dart'; // Mantido
 
-// Substitua pelo IP/Porta do seu backend
-const String _baseUrl = 'http://127.0.0.1:8000';
+// Função main (Ponto de entrada do aplicativo) - MANTIDO SIMPLES
+void main() {
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      title: 'Processador Excel',
+      home: ProcessamentoPage(),
+    );
+  }
+}
+
+// ----------------------------------------------------
+// ProcessamentoPage
+// ----------------------------------------------------
 
 class ProcessamentoPage extends StatefulWidget {
   const ProcessamentoPage({super.key});
@@ -23,79 +42,94 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
   double _progress = 0.0;
   Timer? _progressTimer;
   bool _isProcessing = false;
+  // Instância do LoadAssets - OBRIGATÓRIA
+  final LoadAssets loadFileAsset = LoadAssets.create(); 
 
   @override
   void initState() {
     super.initState();
-    // O polling não começa mais no initState.
   }
 
   @override
   void dispose() {
-    // Garante que o timer seja cancelado ao sair da tela
     _progressTimer?.cancel();
     _numberController.dispose();
     super.dispose();
   }
 
+  // 💡 MÉTODOS ASYNC DE LEITURA DO ASSET
+  Future<String> getUrlServer() async {
+    return await this.getIpValue('ip_server');
+  }
+
+  Future<String> getIpValue(String key) async {
+    // Note: getJsonIps deve retornar Future<Map<String, dynamic>>. 
+    // Foi corrigido para aceitar dynamic se a função for genérica.
+    final Map<String, dynamic> data = await this.loadFileAsset.getJsonIps();
+    return data[key] as String? ?? '';
+  }
+
   // ----------------------------------------------------
-  // Lógica de Polling de Progresso
+  // Lógica de Polling de Progresso (VOID, recebe URL)
   // ----------------------------------------------------
 
   /// Controla o início e o fim da atualização da barra de progresso via polling.
-  void controlProgressPolling(bool startPolling) {
+  // Recebe a URL para não precisar carregá-la dentro do Timer.
+  void controlProgressPolling(bool startPolling, String urlServer) {
     if (startPolling) {
-      // 1. Inicia/Reseta o progresso e o estado
       setState(() {
         _progress = 0.0;
         _isProcessing = true;
       });
-      
-      // 2. Cancela qualquer timer existente
+
       _progressTimer?.cancel();
 
-      // 3. Inicia o novo polling a cada 1 segundo
-      _progressTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      // O CALLBACK DO TIMER É ASYNC
+      _progressTimer = Timer.periodic(const Duration(seconds: 1), (
+        timer,
+      ) async {
         try {
-          final response = await _dio.get('$_baseUrl/api/progresso');
-          
+          final response = await _dio.get(
+            // USA A URL JÁ CARREGADA
+            '$urlServer/api/progresso', 
+          );
+
           if (mounted) {
-            final newProgress = (response.data['percentage'] as num).toDouble() / 100.0;
+            final newProgress =
+                (response.data['percentage'] as num).toDouble() / 100.0;
             setState(() {
               _progress = newProgress;
             });
 
-            // Se o progresso atingir 100%, paramos o polling.
             if (newProgress == 1.0) {
               _stopProgressPolling();
             }
           }
         } catch (e) {
-          // Loga erro, mas não interrompe a UI
           print('Erro ao buscar progresso: $e');
+          // Para o polling em caso de erro de conexão persistente
+          _stopProgressPolling(); 
+          setState(() {
+            _isProcessing = false;
+          });
         }
       });
     } else {
-      // Para o polling e finaliza o estado de processamento
       _stopProgressPolling();
       setState(() {
         _isProcessing = false;
-        // Se a operação foi bem-sucedida, o progresso deve estar em 1.0 (100%)
-        // Se houve erro de rede/servidor, o progresso será mantido onde parou
-        // ou você pode zerar aqui: _progress = 0.0;
       });
     }
   }
 
   void _stopProgressPolling() {
-     _progressTimer?.cancel();
-     _progressTimer = null;
+    _progressTimer?.cancel();
+    _progressTimer = null;
   }
 
   // ----------------------------------------------------
-  // Lógica de Seleção de Arquivo
+  // Lógica de Seleção de Arquivo (Inalterada)
   // ----------------------------------------------------
-
   Future<void> _selectFile() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -108,84 +142,101 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
         _selectedFileName = result.files.single.name;
       });
     } else if (result != null && result.files.single.bytes != null) {
-      // Caso Web: o path é nulo, usamos o nome e bytes
-       setState(() {
-        _selectedFilePath = 'WEB_FILE_READY'; 
+      setState(() {
+        _selectedFilePath = 'WEB_FILE_READY';
         _selectedFileName = result.files.single.name;
       });
     }
   }
 
   // ----------------------------------------------------
-  // Lógica de Processamento e Download
+  // Lógica de Processamento e Download (ASYNC)
   // ----------------------------------------------------
 
-  Future<void> _processFile() async {
-    if (_selectedFileName == null || _numberController.text.isEmpty || _isProcessing) {
+  // 💡 MANTIDO ASYNC
+  Future<void> processSheet() async {
+    if (_selectedFileName == null ||
+        _numberController.text.isEmpty ||
+        _isProcessing) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecione um arquivo e digite um número.')),
+        const SnackBar(
+          content: Text('Selecione um arquivo e digite um número.'),
+        ),
       );
       return;
     }
 
-    // 1. INICIA O POLLING e define _isProcessing = true
-    controlProgressPolling(true); 
+    // 1. OBTÉM O IP DO SERVIDOR ANTES DE QUALQUER COISA
+    final String serverUrl = await this.getUrlServer();
+    if (serverUrl.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Erro: IP do servidor não configurado.')),
+        );
+        return;
+    }
+
+    // 2. INICIA O POLLING com a URL JÁ CARREGADA
+    this.controlProgressPolling(true, serverUrl);
 
     try {
-      // Prepara os dados
-      final fileData = await _getFileData();
-      final formData = FormData.fromMap({
+      final MultipartFile fileData = await this._getFileData();
+      final FormData formData = FormData.fromMap({
         'numero': _numberController.text,
         'file': fileData,
       });
 
-      // 2. Requisição de Processamento
-      final response = await _dio.post('$_baseUrl/api/processar', data: formData);
+      // 3. Requisição de Processamento
+      final response = await _dio.post(
+        '$serverUrl/api/processar',
+        data: formData,
+      );
 
-      // 3. Download (A requisição só retorna 200 no backend SÍNCRONO após 100% de progresso)
-      if (response.statusCode == 200 && response.data['download_path'] != null) {
+      // 4. Download
+      if (response.statusCode == 200 &&
+          response.data['download_path'] != null) {
         final downloadPath = response.data['download_path'];
-        await _downloadFile(downloadPath);
+        await _downloadFile(downloadPath, serverUrl); // Passa a URL para o download
       } else {
-         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Erro no processamento: ${response.data['error'] ?? 'Desconhecido'}')),
+        // ... (Tratamento de erro)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Erro no processamento: ${response.data['error'] ?? 'Desconhecido'}',
+            ),
+          ),
         );
       }
-
     } catch (e) {
       print('Erro no processamento: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Falha na comunicação com o servidor: $e')),
       );
       setState(() {
-         _progress = 0.0; // Zera em caso de erro de conexão
+        _progress = 0.0; // Zera em caso de erro de conexão
       });
     } finally {
-      // 4. PARA O POLLING e reseta o estado de processamento
-      controlProgressPolling(false); 
+      // 5. PARA O POLLING
+      controlProgressPolling(false, serverUrl);
     }
   }
 
-  // Auxiliar para obter o MultipartFile, suportando Web
+  // Auxiliar para obter o MultipartFile (Inalterado)
   Future<MultipartFile> _getFileData() async {
+    // ... (lógica inalterada) ...
     if (_selectedFilePath == 'WEB_FILE_READY') {
-      // Lógica para Flutter Web: precisa re-selecionar o arquivo para obter os bytes,
-      // pois o FilePicker não mantém os bytes na memória após a primeira seleção
-      // sem o WithData=true, e a chamada precisa ser separada para o Dio.
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx'],
         withData: true,
       );
       if (result != null && result.files.single.bytes != null) {
-         return MultipartFile.fromBytes(
-            result.files.single.bytes!,
-            filename: result.files.single.name,
-          );
+        return MultipartFile.fromBytes(
+          result.files.single.bytes!,
+          filename: result.files.single.name,
+        );
       }
       throw Exception("Falha ao obter dados do arquivo para upload.");
     } else {
-      // Lógica para outras plataformas (FilePicker armazena em path)
       return await MultipartFile.fromFile(
         _selectedFilePath!,
         filename: _selectedFileName,
@@ -193,25 +244,25 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
     }
   }
 
-  Future<void> _downloadFile(String filename) async {
+  // 💡 RECEBE A URL COMO ARGUMENTO
+  Future<void> _downloadFile(String filename, String serverUrl) async {
     try {
       // Rota de Download
-      final downloadUrl = '$_baseUrl/api/download/$filename';
+      final downloadUrl = '$serverUrl/api/download/$filename';
 
-      // Criar um link e disparar o download no navegador (Necessário para Flutter Web)
+      // Criar um link e disparar o download no navegador
       final anchor = html.AnchorElement(href: downloadUrl)
         ..setAttribute("download", filename)
         ..click();
-        
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Download de "$filename" iniciado!')),
       );
-
     } catch (e) {
-       print('Erro no download: $e');
-       ScaffoldMessenger.of(context).showSnackBar(
-         const SnackBar(content: Text('Falha ao iniciar o download.')),
-       );
+      print('Erro no download: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Falha ao iniciar o download.')),
+      );
     }
   }
 
@@ -222,9 +273,7 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Processador Excel - Flutter/FastAPI'),
-      ),
+      appBar: AppBar(title: const Text('Processador Excel - Flutter/FastAPI')),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
@@ -236,15 +285,18 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
               LinearProgressIndicator(
                 value: _progress,
                 backgroundColor: Colors.grey[300],
-                color: _isProcessing 
-                    ? Colors.blue 
-                    : (_progress == 1.0 ? Colors.green : Colors.grey), 
+                color: _isProcessing
+                    ? Colors.blue
+                    : (_progress == 1.0 ? Colors.green : Colors.grey),
               ),
               const SizedBox(height: 24),
               Text(
                 'Progresso: ${(_progress * 100).toStringAsFixed(0)}%',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 32),
 
@@ -252,7 +304,9 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
               ElevatedButton.icon(
                 onPressed: _selectFile,
                 icon: const Icon(Icons.upload_file),
-                label: Text(_selectedFileName ?? 'Selecionar Planilha Excel (.xlsx)'),
+                label: Text(
+                  _selectedFileName ?? 'Selecionar Planilha Excel (.xlsx)',
+                ),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
@@ -276,12 +330,17 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
 
               // 4. Botão Processar
               ElevatedButton.icon(
-                onPressed: _isProcessing ? null : _processFile,
+                onPressed: _isProcessing ? null : processSheet,
                 icon: _isProcessing
                     ? const SizedBox(
                         height: 20,
                         width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation<Color>(Colors.white)),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
                       )
                     : const Icon(Icons.play_arrow),
                 label: Text(_isProcessing ? 'PROCESSANDO...' : 'PROCESSAR'),
@@ -295,26 +354,6 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
           ),
         ),
       ),
-    );
-  }
-}
-
-// ----------------------------------------------------
-// Função main (Ponto de entrada do aplicativo)
-// ----------------------------------------------------
-
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Processador Excel',
-      home: const ProcessamentoPage(), 
     );
   }
 }

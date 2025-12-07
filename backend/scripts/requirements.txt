@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]  # Servidor ASGI
+python-multipart   # Necessário para receber arquivos no FastAPI
+pandas             # Para manipulação de planilhas
+openpyxl           # Engine para o pandas ler/escrever .xlsx

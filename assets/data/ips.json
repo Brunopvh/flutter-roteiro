@@ -1,5 +1,5 @@
 {
-    "ip_server": "http://127.0.0.1:5000",
+    "ip_server": "http://localhost:8000",
     "rt_process_excel": "api/process_excel",
     "rt_progress": "api/progress",
     "rt_download": "api/download"

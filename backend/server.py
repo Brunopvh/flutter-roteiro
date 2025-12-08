@@ -32,24 +32,14 @@ app = FastAPI()
 # ----------------------------------------------------
 # 💡 CONFIGURAÇÃO DO CORS
 # ----------------------------------------------------
-origins = [
-    #"*", # Permite todas as origens (MAIS FÁCIL PARA TESTE LOCAL)
-    # Se você quiser restringir, use:
-    # "http://localhost",
-    "http://localhost:5000", # Use a porta real do seu Flutter Web
-]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins="*",
     allow_credentials=True,
     allow_methods=["*"],  # Permite todos os métodos (GET, POST, etc.)
     allow_headers=["*"],  # Permite todos os cabeçalhos
 )
-
-# Variável de estado global para o progresso
-# Em uma aplicação de produção, isso estaria em um banco de dados ou serviço de cache (Redis)
-progress_state = {"percentage": 0} 
 
 
 # ----------------------------------------------------
@@ -67,12 +57,13 @@ def mock_processing(id_process: str):
     print(f"Iniciando processamento com número Excel")
     progress = create_progress.get_progress(id_process)
     df = pd.read_excel(progress.get_output_bytes())
-    columns = df.columns.tolist()
-    final = df[df[columns[0]]]
+
     progress.set_current_value(9)
     output_path = create_temp_dir().join_file('dados.xlsx').absolute()
-    final.to_excel(output_path)
+    df.to_excel(output_path)
     progress.set_output_file(output_path)
+    progress.set_done(True)
+    progress.set_current_value(10)
 
 
 #======================================================#
@@ -117,8 +108,10 @@ async def process_excel(
 # Rota para o frontend buscar o progresso
 #======================================================#
 @app.get(f"/{load_assets.get_route_progress()}")
-def get_progress(id_process: str):
-    return JSONResponse(content=create_progress.get_progress(id_process))
+async def get_progress(id_process: str):
+    return JSONResponse(
+        content=create_progress.get_progress(id_process).get_update()
+    )
 
 
 #======================================================#

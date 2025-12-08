@@ -34,7 +34,8 @@ dependencies:
   dio: ^5.0.0 
   path: ^1.8.3
   # Para selecionar arquivos no navegador (Web)
-  file_picker: ^6.1.1 
+  file_picker: ^6.1.1
+  http: ^1.6.0
 
   # Para salvar o arquivo baixado no navegador (Web)
   universal_html: ^2.0.8

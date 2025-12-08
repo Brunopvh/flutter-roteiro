@@ -15,7 +15,7 @@ class ProgressState(dict[str, Any]):
         self['name_process'] = None
         self['total'] = 0
         self['current'] = 0
-        self['id_process'] = -1
+        self['id_process'] = None
         self['output_file'] = None
         self['output_bytes'] = None
         self['active'] = False
@@ -28,6 +28,17 @@ class ProgressState(dict[str, Any]):
 
     def __eq__(self, other):
         return self.get_id_process() == other.get_id_process()
+
+    def get_update(self) -> dict[str, Any]:
+        prog = 0
+        if self.get_total_value() > 0:
+            prog = (self.get_current_value() / self.get_total_value())
+        return {
+            'current': str(self.get_current_value()),
+            'total': str(self.get_total_value()),
+            'progress': f'{prog:.2f}',
+            'done': self['done'],
+        }
 
     def get_media_type(self) -> str:
         return self['media_type']
@@ -44,7 +55,7 @@ class ProgressState(dict[str, Any]):
     def set_message(self, msg: str):
         self['message'] = msg
 
-    def id_done(self) -> bool:
+    def is_done(self) -> bool:
         return self['done']
 
     def set_done(self, done: bool):
@@ -80,10 +91,12 @@ class ProgressState(dict[str, Any]):
     def set_total_value(self, total: int):
         self['total'] = total
 
-    def get_id_process(self) -> int:
+    def get_id_process(self) -> str:
         return self['id_process']
 
-    def set_id_process(self, id_process: int):
+    def set_id_process(self, id_process: str):
+        if not isinstance(id_process, str):
+            raise TypeError('id_process must be a string')
         self['id_process'] = id_process
 
     def get_current_value(self) -> int:
@@ -113,8 +126,13 @@ class CreateProgressState(dict[str, Any]):
         return ListString(list(super().keys()))
 
     def create_progress(self, id_process: str) -> ProgressState:
+        if not isinstance(id_process, str):
+            raise Exception(
+                f'{__class__.__name__} ID process deve ser str, não {type(id_process)}'
+            )
         if not id_process in self:
             self[id_process] = ProgressState()
+            self[id_process].set_id_process(id_process)
         return self[id_process]
 
     def contains_progress(self, id_progress: str) -> bool:

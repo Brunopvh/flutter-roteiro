@@ -1,16 +1,17 @@
 // lib/pages/home_page.dart (ou o nome do seu arquivo)
 
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart' as dio; // Usa Dio com alias
+import 'package:http/http.dart' as http; // NOVO: Usa http com alias
 import 'package:file_picker/file_picker.dart';
 import 'package:universal_html/html.dart' as html;
 import 'dart:async';
 import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart' show kIsWeb; // Para checar a plataforma
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:convert'; // Para JSON
 import 'package:rotas/util/load_assets.dart'; // Certifique-se de que o caminho está correto
 
 // ----------------------------------------------------
-// ProcessamentoPage (Corrigido e Otimizado)
+// ProcessamentoPage (Usando HTTP)
 // ----------------------------------------------------
 
 class ProcessamentoPage extends StatefulWidget {
@@ -22,17 +23,16 @@ class ProcessamentoPage extends StatefulWidget {
 
 class _ProcessamentoPageState extends State<ProcessamentoPage> {
   final TextEditingController _numberController = TextEditingController();
-  final dio.Dio _dio = dio.Dio();
 
-  // NOVO ESTADO: Armazena o PlatformFile inteiro (com bytes na Web).
-  PlatformFile? _xlsxFile; 
-  String? _selectedFileName; // Apenas para exibição na UI
+  PlatformFile? _xlsxFile;
+  String? _selectedFileName;
 
   double _progress = 0.0;
   Timer? _progressTimer;
   bool _isProcessing = false;
   String? _idProcess;
 
+  // A classe LoadAssets deve ser acessível e implementada corretamente.
   final LoadAssets loadFileAsset = LoadAssets.create();
 
   @override
@@ -53,77 +53,42 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
   }
 
   Future<String> getIpValue(String key) async {
-    // 💡 Usa Map<String, String> corrigido do LoadAssets
     final Map<String, String> data = await this.loadFileAsset.getJsonIps();
     return data[key] ?? '';
   }
 
   // ----------------------------------------------------
-  // Lógica de Seleção de Arquivo (ARROMEDANENTO) 📁
+  // Lógica de Seleção de Arquivo 📁
   // ----------------------------------------------------
   Future<void> _selectFile() async {
-    // Carrega os bytes APENAS se for Web, para garantir upload posterior.
+    // Carrega os bytes se for Web
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['xlsx'],
-      withData: kIsWeb, 
+      withData: kIsWeb,
     );
 
     if (result != null) {
       final file = result.files.single;
 
-      // Validação básica para Web
       if (kIsWeb && file.bytes == null) {
           ScaffoldMessenger.of(context).showSnackBar(
              const SnackBar(content: Text('Erro: Arquivo Web não contém dados.')),
           );
           return;
       }
-      
+
       setState(() {
-          _xlsxFile = file; // <-- ARMAZENA O PlatformFile
+          _xlsxFile = file;
           _selectedFileName = file.name;
       });
-
     }
   }
 
-  // Auxiliar para obter o MultipartFile (USA O ESTADO) 💾
-  // NÃO CHAMA MAIS o FilePicker.
-  Future<dio.MultipartFile> _getFileData() async {
-    if (_xlsxFile == null) {
-        throw Exception("Nenhum arquivo XLSX selecionado para upload.");
-    }
-    
-    final file = _xlsxFile!;
-    
-    if (kIsWeb) {
-        // Web: Usa os bytes armazenados
-        if (file.bytes == null) {
-            throw Exception("Erro: Dados do arquivo não estão disponíveis (Web).");
-        }
-        return dio.MultipartFile.fromBytes(
-            file.bytes!,
-            filename: file.name,
-        );
-    } else {
-        // Mobile/Desktop: Usa o path
-        if (file.path == null) {
-            throw Exception("Erro: Caminho do arquivo não está disponível (Mobile/Desktop).");
-        }
-        return await dio.MultipartFile.fromFile(
-            file.path!,
-            filename: file.name,
-        );
-    }
-  }
-
-
   // ----------------------------------------------------
-  // Lógica de Polling de Progresso (INALTERADA)
+  // Lógica de Polling de Progresso (AGORA USA HTTP)
   // ----------------------------------------------------
 
-  /// Controla o início e o fim da atualização da barra de progresso via polling.
   void controlProgressPolling(bool startPolling, String urlServer, String taskId) {
     if (startPolling) {
       setState(() {
@@ -140,17 +105,23 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
         try {
           String rtProg = await this.loadFileAsset.getRouteProgress();
 
-          final response = await _dio.get(
-            '$urlServer/$rtProg',
-            queryParameters: {'id_process': taskId},
-          );
+          final url = Uri.parse('$urlServer/$rtProg?id_process=$taskId');
+          final response = await http.get(url);
 
-          if (mounted) {
-            final newProgress = (response.data['percentage'] as num).toDouble() / 100.0;
+          if (response.statusCode == 200 && mounted) {
+            final Map<String, dynamic> data = jsonDecode(response.body);
+            final newProgress = double.parse(data['progress']);
+            final bool isDone = data['done'] as bool;
 
             setState(() {
               _progress = newProgress;
             });
+            if (isDone) { // 🟢 Verificar o novo status de conclusão
+              _stopProgressPolling();
+              setState(() {
+                _isProcessing = false;
+              });
+            }
 
             if (newProgress >= 1.0) {
               _stopProgressPolling();
@@ -158,16 +129,18 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
                 _isProcessing = false;
               });
             }
+          } else if (response.statusCode != 200) {
+            throw Exception("Status ${response.statusCode}");
           }
         } catch (e) {
-          print('Erro ao buscar progresso: $e');
+          print('Erro ao buscar progresso (HTTP): $e');
           _stopProgressPolling();
           setState(() {
             _isProcessing = false;
             _progress = 0.0;
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Falha ao monitorar progresso: $e')),
+            SnackBar(content: Text('Falha ao monitorar progresso (HTTP): $e')),
           );
         }
       });
@@ -185,24 +158,16 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
   }
 
   // ----------------------------------------------------
-  // Lógica de Processamento e Download
+  // Lógica de Processamento e Download (AGORA USA HTTP)
   // ----------------------------------------------------
 
   Future<void> processSheet() async {
-    // 💡 Validação do arquivo: Checa se o objeto PlatformFile existe
-    if (_xlsxFile == null) {
+    if (_xlsxFile == null || _numberController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Selecione um arquivo Excel para prosseguir.'),
-        ),
-      );
-      return;
-    }
-
-    if (_numberController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Digite um número para prosseguir.'),
+        SnackBar(
+          content: Text(_xlsxFile == null ?
+            'Selecione um arquivo Excel para prosseguir.' :
+            'Digite um número para prosseguir.'),
         ),
       );
       return;
@@ -210,9 +175,7 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
 
     if (_isProcessing) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Operação em andamento, aguarde.'),
-        ),
+        const SnackBar(content: Text('Operação em andamento, aguarde.')),
       );
       return;
     }
@@ -233,40 +196,64 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
     });
 
     try {
-      final dio.MultipartFile fileData = await this._getFileData(); // Obtém do estado
-      final dio.FormData formData = dio.FormData.fromMap({
-        'numero': _numberController.text,
-        'file': fileData,
-      });
+      final PlatformFile file = _xlsxFile!;
+      final url = Uri.parse('$serverUrl/$rtProcess');
 
-      final response = await _dio.post(
-        '$serverUrl/$rtProcess',
-        data: formData,
-      );
+      // 1. Criar a requisição Multipart
+      final request = http.MultipartRequest('POST', url);
 
-      if (response.statusCode == 200 && response.data['id_process'] != null) {
-        final String taskId = response.data['id_process'];
-        this.controlProgressPolling(true, serverUrl, taskId);
+      // 2. Adicionar o campo 'numero'
+      request.fields['numero'] = _numberController.text;
 
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Processamento iniciado. ID: $taskId')),
-        );
-
+      // 3. Adicionar o arquivo 'file'
+      if (kIsWeb) {
+          // Web: Usa bytes
+          request.files.add(http.MultipartFile.fromBytes(
+              'file',
+              file.bytes!,
+              filename: file.name
+          ));
       } else {
+          // Mobile/Desktop: Usa path
+          request.files.add(await http.MultipartFile.fromPath(
+              'file',
+              file.path!,
+              filename: file.name
+          ));
+      }
+
+      // 4. Enviar e aguardar a resposta
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        if (data['id_process'] != null) {
+          final String taskId = data['id_process'].toString();
+          this.controlProgressPolling(true, serverUrl, taskId);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Processamento iniciado. ID: $taskId')),
+          );
+        } else {
+          throw Exception(data['error'] ?? 'ID de processo ausente.');
+        }
+      } else {
+        // Trata erros de status HTTP (4xx, 5xx)
         this.controlProgressPolling(false, serverUrl, '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Erro no processamento: ${response.data['error'] ?? 'Desconhecido'}',
+              'Erro HTTP ${response.statusCode}: ${response.body}',
             ),
           ),
         );
       }
     } catch (e) {
-      print('Erro no processamento/conexão: $e');
+      print('Erro no processamento/conexão (HTTP): $e');
       this.controlProgressPolling(false, serverUrl, '');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Falha na comunicação com o servidor: $e')),
+        SnackBar(content: Text('Falha na comunicação com o servidor (HTTP): $e')),
       );
     }
   }
@@ -283,15 +270,9 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
       final String serverUrl = await this.getUrlServer();
       final String rtDownload = await this.loadFileAsset.getRouteDownload();
 
-      if (serverUrl.isEmpty || rtDownload.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Erro: Configuração de IP ou Rota de Download ausente.')),
-        );
-        return;
-      }
-
       final downloadUrl = '$serverUrl/$rtDownload?id_process=$_idProcess';
 
+      // Lógica de download específica para Web (usando universal_html)
       final anchor = html.AnchorElement(href: downloadUrl)
         ..setAttribute("download", 'processado_$_idProcess.xlsx')
         ..click();
@@ -315,9 +296,10 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
   @override
   Widget build(BuildContext context) {
     final bool isDownloadReady = _progress >= 1.0 && !_isProcessing && _idProcess != null;
+    final bool isFileSelected = _xlsxFile != null;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Processador Excel - Flutter/FastAPI')),
+      appBar: AppBar(title: const Text('Processador Excel - Flutter/FastAPI (HTTP)')),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
@@ -353,6 +335,8 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
                 ),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: isFileSelected ? Colors.indigo[100] : Colors.grey[300],
+                  foregroundColor: isFileSelected ? Colors.indigo : Colors.black87,
                 ),
               ),
               const SizedBox(height: 16),
@@ -374,8 +358,9 @@ class _ProcessamentoPageState extends State<ProcessamentoPage> {
 
               // 4. Botão Processar
               ElevatedButton.icon(
-                // Desabilita se estiver processando ou pronto para download
-                onPressed: _isProcessing || isDownloadReady ? null : processSheet, 
+                onPressed: _isProcessing || isDownloadReady || !isFileSelected
+                    ? null
+                    : processSheet,
                 icon: _isProcessing
                     ? const SizedBox(
                         height: 20,

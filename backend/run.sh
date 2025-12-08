@@ -9,8 +9,11 @@ source "$FILE_VENV" || exit 1
 	
 
 function main() {
-	uvicorn server:app --reload
-  python3 "${THIS_DIR}/server.py"
+  readonly PORT=5000
+  echo -e "IP Servidor (hostname): $(hostname -I | cut -d ' ' -f 1)"
+  uvicorn server:app --host 0.0.0.0 --port "$PORT"
+	#uvicorn server:app --reload
+  #python3 "${THIS_DIR}/server.py"
 }
 
 main "$@"

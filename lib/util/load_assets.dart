@@ -4,17 +4,15 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 
 class LoadAssets {
-  late File fileAssetIps; // = File('assets/data/ips.json');
+  late String fileAssetIps; // = File('assets/data/ips.json');
   late Directory dirAssets;
 
   LoadAssets(Directory dirAssets) {
     this.dirAssets = dirAssets;
-    this.fileAssetIps = File(
-      path.join(this.dirAssets.path, 'data', 'ips.json'),
-    );
+    this.fileAssetIps = path.join(this.dirAssets.path, 'data', 'ips.json');
   }
 
-  File getFileAssetIps() {
+  String getFileAssetIps() {
     return this.fileAssetIps;
   }
 
@@ -23,8 +21,36 @@ class LoadAssets {
   }
 
   Future<Map<String, String>> getJsonIps() async {
-    String jsonData = await rootBundle.loadString(this.fileAssetIps.path);
-    return json.decode(jsonData) as Map<String, String>;
+    String jsonData = await rootBundle.loadString(this.fileAssetIps);
+    final data = json.decode(jsonData) as Map<String, dynamic>;
+    // Mapeia os valores do Map<String, dynamic> para Map<String, String>.
+    try {
+      final Map<String, String> stringMap = data.map((key, value) {
+        // Tenta converter o valor para String. Se for nulo ou outro tipo,
+        // o 'toString()' é uma forma segura (mas bruta) de garantir uma String.
+        // O cast 'as String' é mais seguro se você tiver certeza de que é uma String.
+        return MapEntry(key, value.toString());
+      });
+      return stringMap;
+    } catch (e) {
+      // Adiciona um tratamento de erro caso a conversão falhe por algum motivo inesperado
+      throw FormatException('Erro ao converter dados do JSON para Map<String, String>: $e');
+    }
+  }
+
+  Future<String> getRouteProcessExcel() async {
+    Map<String, String> data = await this.getJsonIps();
+    return data["rt_process_excel"] ?? "";
+  }
+
+  Future<String> getRouteProgress() async {
+    Map<String, String> data = await this.getJsonIps();
+    return data["rt_progress"] ?? "";
+  }
+
+  Future<String> getRouteDownload() async {
+    Map<String, String> data = await this.getJsonIps();
+    return data["rt_download"] ?? "";
   }
 
   void saveJson(String fileName, Map<String, dynamic> data) {

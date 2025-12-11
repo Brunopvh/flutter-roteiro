@@ -52,7 +52,7 @@ def update_progress(percentage: int):
     progress_state["percentage"] = min(100, max(0, percentage))
 
 
-def mock_processing(id_process: str):
+def process_sheet_internal(id_process: str):
     """Simula o processamento do arquivo e atualiza o progresso."""
     print(f"Iniciando processamento com número Excel")
     progress = create_progress.get_progress(id_process)
@@ -87,7 +87,7 @@ async def process_excel(
         # O processamento deve ser em uma thread separada para não bloquear
         # a rota de progresso. Aqui, para simplificar, rodaremos sincronicamente,
         # mas *recomenda-se usar BackgroundTasks ou Celery*.
-        th = threading.Thread(target=mock_processing, args=(task_id,),)
+        th = threading.Thread(target=process_sheet_internal, args=(task_id,), )
         th.start()
 
         return JSONResponse(
